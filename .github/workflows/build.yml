@@ -30,56 +30,83 @@ jobs:
         mkdir -p app/src/main/assets/stockfish/x86_64
         mkdir -p app/src/main/assets/stockfish/x86
 
-        SF_TAG="sf_18"
+        # Try official Stockfish releases for Android
+        SF_TAG="sf_17.1"
         SF_BASE="https://github.com/official-stockfish/Stockfish/releases/download/${SF_TAG}"
 
-        # === arm64-v8a (most Android phones) ===
-        echo "Downloading Stockfish arm64-v8a..."
-        curl -L --max-time 300 "${SF_BASE}/stockfish-android-armv8.tar" -o /tmp/sf_arm64.tar
-        echo "Downloaded arm64 tar: $(stat -c%s /tmp/sf_arm64.tar 2>/dev/null || echo 'MISSING') bytes"
-        mkdir -p /tmp/sf_arm64
-        tar xf /tmp/sf_arm64.tar -C /tmp/sf_arm64
-        echo "All files in tar:"
-        find /tmp/sf_arm64 -type f -executable | head -10
-        find /tmp/sf_arm64 -type f -name "*.exe" -o -name "stockfish*" -not -name "*.txt" -not -name "*.md" -not -name "*.cff" | head -10
-        # The binary might be named stockfish-android-armv8 or just in a bin/ dir
-        SF_BIN=$(find /tmp/sf_arm64 -type f -executable -not -name "*.txt" -not -name "*.md" -not -name "*.cff" -not -name "*.py" | head -1)
-        if [ -z "$SF_BIN" ]; then
-          # Try any file that's not a text/doc file
-          SF_BIN=$(find /tmp/sf_arm64 -type f ! -name "*.txt" ! -name "*.md" ! -name "*.cff" ! -name "*.py" ! -name "AUTHORS" ! -name "Copying" ! -path "*/wiki/*" ! -path "*/.git/*" | head -1)
-        fi
-        if [ -n "$SF_BIN" ]; then
-          cp "$SF_BIN" app/src/main/assets/stockfish/arm64-v8a/stockfish
-          chmod +x app/src/main/assets/stockfish/arm64-v8a/stockfish
-          echo "arm64-v8a: Copied from $SF_BIN"
-        else
-          echo "arm64-v8a: No stockfish binary found in tar"
-        fi
+        # === arm64-v8a (most modern Android phones) ===
+        echo "=== Downloading Stockfish arm64-v8a ==="
+        for tar_name in stockfish-android-armv8.tar stockfish-ubuntu-x86-64-avx2.tar; do
+          echo "Trying ${SF_BASE}/${tar_name}..."
+          if curl -L --max-time 120 --fail "${SF_BASE}/${tar_name}" -o /tmp/sf_arm64.tar 2>/dev/null; then
+            echo "Downloaded: $(stat -c%s /tmp/sf_arm64.tar 2>/dev/null || echo '0') bytes"
+            mkdir -p /tmp/sf_arm64
+            tar xf /tmp/sf_arm64.tar -C /tmp/sf_arm64 2>/dev/null || true
+            SF_BIN=$(find /tmp/sf_arm64 -type f -executable -not -name "*.txt" -not -name "*.md" -not -name "*.cff" -not -name "*.py" -not -name "AUTHORS" -not -name "Copying" | head -1)
+            if [ -n "$SF_BIN" ]; then
+              cp "$SF_BIN" app/src/main/assets/stockfish/arm64-v8a/stockfish
+              chmod +x app/src/main/assets/stockfish/arm64-v8a/stockfish
+              echo "arm64-v8a: Copied from $SF_BIN ($(stat -c%s app/src/main/assets/stockfish/arm64-v8a/stockfish) bytes)"
+              break
+            fi
+            rm -rf /tmp/sf_arm64 /tmp/sf_arm64.tar
+          fi
+        done
 
         # === armeabi-v7a (older Android phones) ===
-        echo "Downloading Stockfish armeabi-v7a..."
-        curl -L --max-time 300 "${SF_BASE}/stockfish-android-armv7-neon.tar" -o /tmp/sf_armv7.tar
-        echo "Downloaded armv7 tar: $(stat -c%s /tmp/sf_armv7.tar 2>/dev/null || echo 'MISSING') bytes"
-        mkdir -p /tmp/sf_armv7
-        tar xf /tmp/sf_armv7.tar -C /tmp/sf_armv7
-        echo "All files in tar:"
-        find /tmp/sf_armv7 -type f -executable | head -10
-        find /tmp/sf_armv7 -type f -name "*.exe" -o -name "stockfish*" -not -name "*.txt" -not -name "*.md" -not -name "*.cff" | head -10
-        SF_BIN=$(find /tmp/sf_armv7 -type f -executable -not -name "*.txt" -not -name "*.md" -not -name "*.cff" -not -name "*.py" | head -1)
-        if [ -z "$SF_BIN" ]; then
-          SF_BIN=$(find /tmp/sf_armv7 -type f ! -name "*.txt" ! -name "*.md" ! -name "*.cff" ! -name "*.py" ! -name "AUTHORS" ! -name "Copying" ! -path "*/wiki/*" ! -path "*/.git/*" | head -1)
-        fi
-        if [ -n "$SF_BIN" ]; then
-          cp "$SF_BIN" app/src/main/assets/stockfish/armeabi-v7a/stockfish
-          chmod +x app/src/main/assets/stockfish/armeabi-v7a/stockfish
-          echo "armeabi-v7a: Copied from $SF_BIN"
-        else
-          echo "armeabi-v7a: No stockfish binary found in tar"
+        echo "=== Downloading Stockfish armeabi-v7a ==="
+        for tar_name in stockfish-android-armv7-neon.tar; do
+          echo "Trying ${SF_BASE}/${tar_name}..."
+          if curl -L --max-time 120 --fail "${SF_BASE}/${tar_name}" -o /tmp/sf_armv7.tar 2>/dev/null; then
+            echo "Downloaded: $(stat -c%s /tmp/sf_armv7.tar 2>/dev/null || echo '0') bytes"
+            mkdir -p /tmp/sf_armv7
+            tar xf /tmp/sf_armv7.tar -C /tmp/sf_armv7 2>/dev/null || true
+            SF_BIN=$(find /tmp/sf_armv7 -type f -executable -not -name "*.txt" -not -name "*.md" -not -name "*.cff" -not -name "*.py" -not -name "AUTHORS" -not -name "Copying" | head -1)
+            if [ -n "$SF_BIN" ]; then
+              cp "$SF_BIN" app/src/main/assets/stockfish/armeabi-v7a/stockfish
+              chmod +x app/src/main/assets/stockfish/armeabi-v7a/stockfish
+              echo "armeabi-v7a: Copied from $SF_BIN ($(stat -c%s app/src/main/assets/stockfish/armeabi-v7a/stockfish) bytes)"
+              break
+            fi
+            rm -rf /tmp/sf_armv7 /tmp/sf_armv7.tar
+          fi
+        done
+
+        # === Try alternative source: stockfish-android prebuilt from peterosterlund2 ===
+        if [ ! -f app/src/main/assets/stockfish/arm64-v8a/stockfish ] || [ ! -f app/src/main/assets/stockfish/armeabi-v7a/stockfish ]; then
+          echo "=== Trying peterosterlund2 stockfish-android ==="
+          for release_url in \
+            "https://github.com/peterosterlund2/stockfish-android/releases/download/v1.0/stockfish-android.zip" \
+            "https://github.com/peterosterlund2/stockfish/releases/download/v1.0/stockfish-android.zip"; do
+            if curl -L --max-time 120 --fail "$release_url" -o /tmp/sf_android.zip 2>/dev/null; then
+              echo "Downloaded alternative: $(stat -c%s /tmp/sf_android.zip 2>/dev/null || echo '0') bytes"
+              mkdir -p /tmp/sf_alt
+              unzip -o /tmp/sf_android.zip -d /tmp/sf_alt 2>/dev/null || true
+              # Find arm64 binary
+              if [ ! -f app/src/main/assets/stockfish/arm64-v8a/stockfish ]; then
+                SF_BIN=$(find /tmp/sf_alt -type f \( -name "stockfish*arm64*" -o -name "stockfish*armv8*" \) -executable 2>/dev/null | head -1)
+                if [ -n "$SF_BIN" ]; then
+                  cp "$SF_BIN" app/src/main/assets/stockfish/arm64-v8a/stockfish
+                  chmod +x app/src/main/assets/stockfish/arm64-v8a/stockfish
+                  echo "Alt arm64-v8a: Copied from $SF_BIN"
+                fi
+              fi
+              # Find armv7 binary
+              if [ ! -f app/src/main/assets/stockfish/armeabi-v7a/stockfish ]; then
+                SF_BIN=$(find /tmp/sf_alt -type f \( -name "stockfish*armv7*" -o -name "stockfish*armeabi*" \) -executable 2>/dev/null | head -1)
+                if [ -n "$SF_BIN" ]; then
+                  cp "$SF_BIN" app/src/main/assets/stockfish/armeabi-v7a/stockfish
+                  chmod +x app/src/main/assets/stockfish/armeabi-v7a/stockfish
+                  echo "Alt armeabi-v7a: Copied from $SF_BIN"
+                fi
+              fi
+              rm -rf /tmp/sf_alt /tmp/sf_android.zip
+              break
+            fi
+          done
         fi
 
-        # x86_64 and x86: no official Android builds exist, Kotlin fallback will be used
-
-        # === VERIFY ===
+        # === VERIFY ALL BINARIES ===
         echo "=== Stockfish binary verification ==="
         SUCCESS=0
         for abi in arm64-v8a armeabi-v7a x86_64 x86; do
@@ -89,7 +116,7 @@ jobs:
             TYPE=$(file "$FILE" 2>/dev/null || echo "unknown")
             echo "  $abi: $SIZE bytes | $TYPE"
             if echo "$TYPE" | grep -qi "ELF"; then
-              echo "  $abi: REAL ELF BINARY"
+              echo "  $abi: VALID ELF BINARY"
               SUCCESS=$((SUCCESS+1))
             else
               echo "  $abi: NOT AN ELF - REMOVING"
@@ -102,7 +129,8 @@ jobs:
 
         echo "=== $SUCCESS real Stockfish binaries found ==="
         if [ $SUCCESS -eq 0 ]; then
-          echo "WARNING: No Stockfish binaries! App will use Kotlin fallback engine."
+          echo "WARNING: No Stockfish binaries found! App will use Kotlin fallback engine."
+          echo "The Kotlin engine works but Stockfish provides much stronger play."
         fi
 
     - name: Grant execute permission for gradlew
@@ -111,10 +139,17 @@ jobs:
     - name: Build Debug APK
       run: ./gradlew assembleDebug
 
+    - name: Rename Debug APK with version
+      run: |
+        APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+        if [ -n "$APK" ]; then
+          mv "$APK" app/build/outputs/apk/debug/chess-solver-v3-debug.apk
+        fi
+
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
       with:
-        name: chess-solver-debug
+        name: chess-solver-v3-debug
         path: app/build/outputs/apk/debug/*.apk
 
     - name: Build Release APK
@@ -123,5 +158,5 @@ jobs:
     - name: Upload Release APK
       uses: actions/upload-artifact@v4
       with:
-        name: chess-solver-release
+        name: chess-solver-v3-release
         path: app/build/outputs/apk/release/*.apk

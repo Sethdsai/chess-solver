@@ -20,6 +20,8 @@ class StockfishEngine {
     companion object {
         private const val TAG = "StockfishEngine"
         private const val ENGINE_FILENAME = "stockfish"
+        private const val ENGINE_VERSION_KEY = "stockfish_version"
+        private const val CURRENT_VERSION = 3 // Increment when updating the binary
     }
 
     private var process: Process? = null
@@ -43,36 +45,49 @@ class StockfishEngine {
                 binaryFile.setReadable(true, false)
 
                 Log.d(TAG, "Starting Stockfish process: ${binaryFile.absolutePath}")
-                
+                Log.d(TAG, "Binary size: ${binaryFile.length()} bytes")
+
                 process = ProcessBuilder(binaryFile.absolutePath)
                     .redirectErrorStream(true)
                     .start()
-                
+
                 writer = OutputStreamWriter(process!!.outputStream)
                 reader = BufferedReader(InputStreamReader(process!!.inputStream), 8192)
 
-                // UCI handshake
+                // UCI handshake with detailed logging
                 sendCommand("uci")
-                if (waitForResponse("uciok", 5000)) {
+
+                // Read UCI responses with timeout
+                val uciOk = waitForResponse("uciok", 10000)
+                Log.d(TAG, "UCI handshake uciok: $uciOk")
+
+                if (uciOk) {
                     sendCommand("setoption name Threads value 2")
                     sendCommand("setoption name Hash value 64")
+                    sendCommand("setoption name Skill Level value 20")
                     sendCommand("isready")
-                    if (waitForResponse("readyok", 5000)) {
+
+                    val readyOk = waitForResponse("readyok", 10000)
+                    Log.d(TAG, "UCI handshake readyok: $readyOk")
+
+                    if (readyOk) {
                         isInitialized = true
                         useFallback = false
                         Log.d(TAG, "Stockfish engine initialized successfully!")
                         return true
                     }
                 }
-                
-                // If we got here, UCI handshake failed
+
+                // UCI handshake failed
                 Log.w(TAG, "UCI handshake failed, killing process")
-                process?.destroy()
+                process?.destroyForcibly()
                 process = null
+            } else {
+                Log.w(TAG, "No Stockfish binary found in assets")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to start native Stockfish: ${e.message}")
-            process?.destroy()
+            Log.w(TAG, "Failed to start native Stockfish: ${e.message}", e)
+            try { process?.destroyForcibly() } catch (_: Exception) {}
             process = null
         }
 
@@ -83,7 +98,7 @@ class StockfishEngine {
         return true
     }
 
-    fun getBestMove(fen: String, depth: Int = 16, timeMs: Int = 3000): String? {
+    fun getBestMove(fen: String, depth: Int = 18, timeMs: Int = 3000): String? {
         if (!isInitialized) return null
 
         if (useFallback) {
@@ -101,19 +116,24 @@ class StockfishEngine {
             sendCommand("ucinewgame")
             sendCommand("position fen $fen")
             sendCommand("isready")
-            waitForResponse("readyok", 3000)
+            waitForResponse("readyok", 5000)
             sendCommand("go depth $depth movetime $timeMs")
 
             val startTime = System.currentTimeMillis()
-            val timeout = (timeMs + 5000).toLong()
+            val timeout = (timeMs + 8000).toLong()
 
             while (System.currentTimeMillis() - startTime < timeout) {
                 try {
                     val future = engineThread.submit<String?> { reader?.readLine() }
                     val line = future.get(2, TimeUnit.SECONDS)
-                    
-                    if (line == null) break
-                    
+
+                    if (line == null) {
+                        Log.w(TAG, "Stockfish process ended unexpectedly")
+                        break
+                    }
+
+                    Log.d(TAG, "SF: $line")
+
                     if (line.startsWith("bestmove")) {
                         val parts = line.split("\\s+".toRegex())
                         if (parts.size >= 2) {
@@ -126,6 +146,7 @@ class StockfishEngine {
                 } catch (e: TimeoutException) {
                     continue
                 } catch (e: Exception) {
+                    Log.e(TAG, "Error reading Stockfish output", e)
                     break
                 }
             }
@@ -153,26 +174,32 @@ class StockfishEngine {
         val filesDir = context.filesDir
         val binaryFile = File(filesDir, ENGINE_FILENAME)
 
+        // Check version - reinstall if outdated
+        val prefs = context.getSharedPreferences("chess_solver", Context.MODE_PRIVATE)
+        val installedVersion = prefs.getInt(ENGINE_VERSION_KEY, 0)
+
         // Check if we already have the correct binary
-        if (binaryFile.exists() && binaryFile.canExecute()) {
+        if (binaryFile.exists() && binaryFile.canExecute() && installedVersion >= CURRENT_VERSION) {
             // Verify it's a real binary (not a placeholder script)
             val firstBytes = ByteArray(4)
             try {
                 binaryFile.inputStream().use { it.read(firstBytes) }
                 // ELF binaries start with 0x7F 'E' 'L' 'F'
                 if (firstBytes[0] == 0x7F.toByte() && firstBytes[1] == 'E'.code.toByte()) {
-                    Log.d(TAG, "Existing Stockfish binary looks valid")
+                    Log.d(TAG, "Existing Stockfish binary looks valid (version $installedVersion)")
                     return binaryFile
                 }
-                // It's a placeholder or corrupt, delete it
                 Log.w(TAG, "Existing binary is not a valid ELF, replacing")
                 binaryFile.delete()
             } catch (e: Exception) {
                 binaryFile.delete()
             }
+        } else if (binaryFile.exists()) {
+            Log.d(TAG, "Stockfish binary version outdated ($installedVersion < $CURRENT_VERSION), reinstalling")
+            binaryFile.delete()
         }
 
-        // Try to copy from assets
+        // Try to copy from assets for each supported ABI
         val abis = if (android.os.Build.SUPPORTED_ABIS != null) {
             android.os.Build.SUPPORTED_ABIS.toList()
         } else {
@@ -188,8 +215,18 @@ class StockfishEngine {
                         input.copyTo(output)
                     }
                 }
-                Log.d(TAG, "Copied Stockfish binary for ABI: $abi")
-                return binaryFile
+                Log.d(TAG, "Copied Stockfish binary for ABI: $abi (${binaryFile.length()} bytes)")
+
+                // Verify the copied binary is a real ELF
+                val verifyBytes = ByteArray(4)
+                binaryFile.inputStream().use { it.read(verifyBytes) }
+                if (verifyBytes[0] == 0x7F.toByte() && verifyBytes[1] == 'E'.code.toByte()) {
+                    prefs.edit().putInt(ENGINE_VERSION_KEY, CURRENT_VERSION).apply()
+                    return binaryFile
+                } else {
+                    Log.w(TAG, "Copied binary for $abi is not ELF, removing")
+                    binaryFile.delete()
+                }
             } catch (e: Exception) {
                 Log.d(TAG, "No binary for ABI $abi: ${e.message}")
                 continue
@@ -206,6 +243,9 @@ class StockfishEngine {
                 write("$command\n")
                 flush()
             }
+            if (command != "uci" && command != "isready" && command != "ucinewgame") {
+                Log.d(TAG, ">> $command")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send command: $command", e)
         }
@@ -217,7 +257,7 @@ class StockfishEngine {
             while (System.currentTimeMillis() - startTime < timeoutMs) {
                 val future = engineThread.submit<String?> { reader?.readLine() }
                 try {
-                    val line = future.get(1, TimeUnit.SECONDS)
+                    val line = future.get(2, TimeUnit.SECONDS)
                     if (line == null) return false
                     if (line.contains(target)) return true
                 } catch (e: TimeoutException) {
@@ -233,7 +273,7 @@ class StockfishEngine {
     fun destroy() {
         try {
             sendCommand("quit")
-            Thread.sleep(200)
+            Thread.sleep(300)
             process?.destroyForcibly()
         } catch (e: Exception) {
             // Ignore

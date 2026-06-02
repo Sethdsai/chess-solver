@@ -72,6 +72,7 @@ class ChessOverlayService : Service() {
     private var densityDpi = 0
 
     private var calibratedRect: Rect? = null
+    private var isCalibrating = false
 
     @Volatile
     private var isProcessing = false
@@ -98,10 +99,10 @@ class ChessOverlayService : Service() {
             calibratedRect = Rect(calLeft, calTop, calRight, calBottom)
         }
 
-        // Initialize engine (async, won't block)
+        // Initialize engine (async)
         Thread {
             val success = engine.initialize(this)
-            Log.d(TAG, "Engine initialized: $success, using fallback: ${!engine.isInitialized || engine.useFallback}")
+            Log.d(TAG, "Engine initialized: $success, using fallback: ${engine.useFallback}")
         }.start()
     }
 
@@ -227,13 +228,24 @@ class ChessOverlayService : Service() {
 
         // Engine label
         engineLabelView = TextView(this).apply {
-            text = if (engine.isInitialized) "Stockfish" else "Kotlin Engine"
+            text = if (engine.isInitialized && !engine.useFallback) "Stockfish" else "Kotlin Engine"
             setTextColor(Color.parseColor("#484F58"))
             textSize = 9f
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         container.addView(engineLabelView)
+
+        // Calibration status indicator
+        val calStatusView = TextView(this).apply {
+            text = if (calibratedRect != null) "Board: Calibrated" else "Board: Not set"
+            setTextColor(if (calibratedRect != null) Color.parseColor("#3FB950") else Color.parseColor("#F85149"))
+            textSize = 9f
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            tag = "cal_status"
+        }
+        container.addView(calStatusView)
 
         // Button row
         val buttonRow = LinearLayout(this).apply {
@@ -244,17 +256,17 @@ class ChessOverlayService : Service() {
         }
 
         val btnMyMove = Button(this).apply {
-            text = "♞ Solve"
+            text = "Solve"
             setTextColor(Color.WHITE)
             textSize = 13f
             setAllCaps(false)
             background = GradientDrawable().apply { setColor(Color.parseColor("#238636")); cornerRadius = 14f * density }
             setPadding((14 * density).toInt(), (8 * density).toInt(), (14 * density).toInt(), (8 * density).toInt())
-            setOnClickListener { if (!isProcessing) onMyMoveNow() }
+            setOnClickListener { if (!isProcessing && !isCalibrating) onMyMoveNow() }
         }
 
         val btnCalibrate = Button(this).apply {
-            text = "◎"
+            text = "Cal"
             setTextColor(Color.WHITE)
             textSize = 13f
             setAllCaps(false)
@@ -264,7 +276,7 @@ class ChessOverlayService : Service() {
         }
 
         val btnAutoDetect = Button(this).apply {
-            text = "⊞"
+            text = "Auto"
             setTextColor(Color.WHITE)
             textSize = 13f
             setAllCaps(false)
@@ -287,7 +299,7 @@ class ChessOverlayService : Service() {
         container.addView(buttonRow)
         overlayView = container
 
-        // Drag handling
+        // Drag handling for floating panel
         var initialX = 0; var initialY = 0; var initialTouchX = 0f; var initialTouchY = 0f; var isDragging = false
         container.setOnTouchListener { _, event ->
             when (event.action) {
@@ -324,17 +336,31 @@ class ChessOverlayService : Service() {
         calibrationOverlayView = CalibrationOverlayView(this)
         calibrationOverlayView?.onCalibrationComplete = { rect ->
             calibratedRect = rect
+            isCalibrating = false
             makeCalibrationNotTouchable()
             saveCalibration(rect)
-            statusTextView?.text = "Calibrated ✓"
-            engineLabelView?.text = if (engine.isInitialized) "Stockfish" else "Kotlin Engine"
-            Toast.makeText(this, "Board saved! Tap ♞ Solve to find moves.", Toast.LENGTH_SHORT).show()
+            statusTextView?.text = "Calibrated"
+            engineLabelView?.text = if (engine.isInitialized && !engine.useFallback) "Stockfish" else "Kotlin Engine"
+            updateCalStatus(true)
+            Toast.makeText(this, "Board saved! Tap Solve to find moves.", Toast.LENGTH_SHORT).show()
         }
         calibrationOverlayView?.onCalibrationCancelled = {
+            isCalibrating = false
             makeCalibrationNotTouchable()
-            statusTextView?.text = "Ready"
+            statusTextView?.text = if (calibratedRect != null) "Calibrated" else "Ready"
         }
         windowManager?.addView(calibrationOverlayView, calParams)
+    }
+
+    private fun updateCalStatus(calibrated: Boolean) {
+        val container = overlayView as? LinearLayout ?: return
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            if (child.tag == "cal_status" && child is TextView) {
+                child.text = if (calibrated) "Board: Calibrated" else "Board: Not set"
+                child.setTextColor(if (calibrated) Color.parseColor("#3FB950") else Color.parseColor("#F85149"))
+            }
+        }
     }
 
     private fun makeCalibrationTouchable() {
@@ -358,15 +384,25 @@ class ChessOverlayService : Service() {
     }
 
     private fun startCalibration() {
+        if (isCalibrating) {
+            // Already calibrating, cancel
+            calibrationOverlayView?.cancelCalibration()
+            isCalibrating = false
+            makeCalibrationNotTouchable()
+            statusTextView?.text = if (calibratedRect != null) "Calibrated" else "Ready"
+            return
+        }
+        isCalibrating = true
         statusTextView?.text = "Calibrating..."
         makeCalibrationTouchable()
+        // Pass existing calibratedRect to allow resume/edit
         calibrationOverlayView?.startCalibration(calibratedRect)
     }
 
     private fun autoDetectBoard() {
         val bitmap = latestBitmap
         if (bitmap == null) {
-            Toast.makeText(this, "No screen data yet.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "No screen data yet. Wait a moment.", Toast.LENGTH_SHORT).show()
             return
         }
         statusTextView?.text = "Scanning..."
@@ -376,13 +412,15 @@ class ChessOverlayService : Service() {
                 calibratedRect = result.boardRect
                 saveCalibration(result.boardRect)
                 withContext(Dispatchers.Main) {
-                    statusTextView?.text = "Auto-detected ✓"
-                    Toast.makeText(this@ChessOverlayService, "Board detected! Tap ♞ Solve.", Toast.LENGTH_SHORT).show()
+                    statusTextView?.text = "Auto-detected"
+                    updateCalStatus(true)
+                    Toast.makeText(this@ChessOverlayService, "Board detected! Tap Solve.", Toast.LENGTH_SHORT).show()
                 }
             } else {
                 withContext(Dispatchers.Main) {
-                    statusTextView?.text = "Not found — calibrate"
-                    Toast.makeText(this@ChessOverlayService, "Couldn't auto-detect. Tap ◎ to calibrate manually.", Toast.LENGTH_LONG).show()
+                    statusTextView?.text = "Not found - calibrate"
+                    updateCalStatus(false)
+                    Toast.makeText(this@ChessOverlayService, "Couldn't auto-detect. Tap Cal to set manually.", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -392,6 +430,7 @@ class ChessOverlayService : Service() {
         getSharedPreferences("chess_solver", Context.MODE_PRIVATE).edit().apply {
             putInt("cal_left", rect.left); putInt("cal_top", rect.top)
             putInt("cal_right", rect.right); putInt("cal_bottom", rect.bottom)
+            putBoolean("calibration_incomplete", false)
             apply()
         }
     }
@@ -399,7 +438,7 @@ class ChessOverlayService : Service() {
     private fun onMyMoveNow() {
         val currentBitmap = latestBitmap
         if (currentBitmap == null) {
-            Toast.makeText(this, "No screen data yet.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "No screen data yet. Wait a moment.", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -419,22 +458,27 @@ class ChessOverlayService : Service() {
 
                 if (boardResult == null) {
                     withContext(Dispatchers.Main) {
-                        statusTextView?.text = "No board — tap ◎ or ⊞"
-                        Toast.makeText(this@ChessOverlayService, "No board found.\nTap ◎ to calibrate or ⊞ to auto-detect.", Toast.LENGTH_LONG).show()
+                        statusTextView?.text = "No board - Cal or Auto"
+                        Toast.makeText(this@ChessOverlayService, "No board found.\nTap Cal or Auto to set it.", Toast.LENGTH_LONG).show()
                     }
                     return@launch
                 }
 
+                // Update calibrated rect with detected rect
+                calibratedRect = boardResult.boardRect
+                withContext(Dispatchers.Main) { updateCalStatus(true) }
+
                 val fen = withContext(Dispatchers.Default) { detector.boardToFEN(boardResult) }
+                Log.d(TAG, "Detected FEN: $fen")
+
                 statusTextView?.text = "Thinking..."
-                engineLabelView?.text = if (engine.isInitialized) "Stockfish..." else "Kotlin..."
+                engineLabelView?.text = if (engine.isInitialized && !engine.useFallback) "Stockfish..." else "Kotlin..."
 
                 val bestMove = withContext(Dispatchers.Default) {
                     try {
-                        if (engine.isInitialized) {
-                            engine.getBestMove(fen, depth = 16, timeMs = 3000)
+                        if (engine.isInitialized && !engine.useFallback) {
+                            engine.getBestMove(fen, depth = 18, timeMs = 3000)
                         } else {
-                            // Fallback
                             val ke = com.chesssolver.app.engine.ChessEngine()
                             ke.setPosition(fen)
                             ke.getBestMove(depth = 4, timeMs = 3000)
@@ -461,15 +505,15 @@ class ChessOverlayService : Service() {
                     val from = bestMove.substring(0, 2)
                     val to = bestMove.substring(2, 4)
                     arrowOverlayView?.drawArrow(boardResult.boardRect, from, to, boardResult.isFlipped)
-                    statusTextView?.text = "$from → $to"
-                    engineLabelView?.text = if (engine.isInitialized) "Stockfish ✓" else "Kotlin ✓"
+                    statusTextView?.text = "$from -> $to"
+                    engineLabelView?.text = if (engine.isInitialized && !engine.useFallback) "Stockfish OK" else "Kotlin OK"
                 }
 
                 delay(5000)
                 withContext(Dispatchers.Main) {
                     arrowOverlayView?.clearArrow()
                     statusTextView?.text = "Ready"
-                    engineLabelView?.text = if (engine.isInitialized) "Stockfish" else "Kotlin Engine"
+                    engineLabelView?.text = if (engine.isInitialized && !engine.useFallback) "Stockfish" else "Kotlin Engine"
                 }
 
             } catch (e: Exception) {

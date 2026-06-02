@@ -17,100 +17,136 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
     var onCalibrationComplete: ((Rect) -> Unit)? = null
     var onCalibrationCancelled: (() -> Unit)? = null
 
-    // Drawing state
     private val drawingView = DrawingView(context)
-    
-    // Buttons
+    private val buttonContainer = FrameLayout(context)
+
     private val btnSave = Button(context).apply {
-        text = "✓ Save"
+        text = "SAVE"
         setTextColor(Color.WHITE)
-        textSize = 16f
-        setAllCaps(false)
+        textSize = 15f
+        setAllCaps(true)
         setBackgroundColor(Color.parseColor("#238636"))
-        setPadding(32, 16, 32, 16)
-        visibility = GONE
+        setPadding(40, 20, 40, 20)
         setOnClickListener { saveCalibration() }
     }
-    
+
     private val btnCancel = Button(context).apply {
-        text = "✕ Cancel"
+        text = "CANCEL"
         setTextColor(Color.WHITE)
-        textSize = 16f
-        setAllCaps(false)
-        setBackgroundColor(Color.parseColor("#F85149"))
-        setPadding(32, 16, 32, 16)
-        visibility = GONE
+        textSize = 15f
+        setAllCaps(true)
+        setBackgroundColor(Color.parseColor("#6E7681"))
+        setPadding(40, 20, 40, 20)
         setOnClickListener { cancelCalibration() }
+    }
+
+    private val btnReset = Button(context).apply {
+        text = "RESET"
+        setTextColor(Color.WHITE)
+        textSize = 13f
+        setAllCaps(true)
+        setBackgroundColor(Color.parseColor("#D29922"))
+        setPadding(24, 12, 24, 12)
+        setOnClickListener { resetCalibration() }
     }
 
     init {
         addView(drawingView)
-        addView(btnSave)
-        addView(btnCancel)
+        addView(buttonContainer)
+        buttonContainer.addView(btnSave)
+        buttonContainer.addView(btnCancel)
+        buttonContainer.addView(btnReset)
     }
 
     fun startCalibration(existingRect: Rect? = null) {
         drawingView.startCalibration(existingRect)
-        updateButtonPositions()
+        showButtons()
     }
 
     fun cancelCalibration() {
         drawingView.cancelCalibration()
-        btnSave.visibility = GONE
-        btnCancel.visibility = GONE
+        hideButtons()
         onCalibrationCancelled?.invoke()
+    }
+
+    private fun resetCalibration() {
+        drawingView.resetSelection()
+        btnSave.visibility = GONE
+        val prefs = context.getSharedPreferences("chess_solver", Context.MODE_PRIVATE)
+        prefs.edit().remove("incomplete_cal_left").remove("incomplete_cal_top")
+            .remove("incomplete_cal_right").remove("incomplete_cal_bottom")
+            .putBoolean("calibration_incomplete", false).apply()
     }
 
     private fun saveCalibration() {
         val rect = drawingView.getCurrentRect()
         if (rect != null && rect.width() > 50 && rect.height() > 50) {
             calibrationRect = rect
-            btnSave.visibility = GONE
-            btnCancel.visibility = GONE
+            hideButtons()
             drawingView.finalizeCalibration()
+            val prefs = context.getSharedPreferences("chess_solver", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("calibration_incomplete", false).apply()
             onCalibrationComplete?.invoke(rect)
         }
     }
 
-    private fun updateButtonPositions() {
-        // Position buttons at the bottom
+    private fun showButtons() {
         post {
-            val btnHeight = 120
-            val btnWidth = 280
-            
-            btnSave.layoutParams = LayoutParams(btnWidth, btnHeight).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = 200
+            val density = context.resources.displayMetrics.density
+            val btnWidth = (160 * density).toInt()
+            val btnHeight = (56 * density).toInt()
+            val smallBtnWidth = (120 * density).toInt()
+            val smallBtnHeight = (44 * density).toInt()
+            val margin = (16 * density).toInt()
+
+            btnSave.layoutParams = LayoutParams(btnWidth, btnHeight, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = (150 * density).toInt()
             }
-            
-            btnCancel.layoutParams = LayoutParams(btnWidth, btnHeight).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = 60
+            btnCancel.layoutParams = LayoutParams(btnWidth, btnHeight, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = (80 * density).toInt()
             }
-            
+            btnReset.layoutParams = LayoutParams(smallBtnWidth, smallBtnHeight, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = margin
+            }
+
             btnSave.visibility = if (drawingView.hasSelection()) VISIBLE else GONE
             btnCancel.visibility = VISIBLE
+            btnReset.visibility = VISIBLE
         }
     }
 
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        super.onLayout(changed, left, top, right, bottom)
-        updateButtonPositions()
+    private fun hideButtons() {
+        btnSave.visibility = GONE
+        btnCancel.visibility = GONE
+        btnReset.visibility = GONE
+    }
+
+    fun updateSaveButtonState() {
+        btnSave.visibility = if (drawingView.hasSelection()) VISIBLE else GONE
+        val rect = drawingView.getCurrentRect()
+        val prefs = context.getSharedPreferences("chess_solver", Context.MODE_PRIVATE)
+        if (rect != null && rect.width() > 50 && rect.height() > 50) {
+            prefs.edit()
+                .putInt("incomplete_cal_left", rect.left)
+                .putInt("incomplete_cal_top", rect.top)
+                .putInt("incomplete_cal_right", rect.right)
+                .putInt("incomplete_cal_bottom", rect.bottom)
+                .putBoolean("calibration_incomplete", true)
+                .apply()
+        }
     }
 
     inner class DrawingView(ctx: Context) : View(ctx) {
 
-        private var mode = 0  // 0=IDLE, 1=DRAGGING_NEW, 2=DRAGGING_CORNER, 3=MOVING
+        private var mode = 0 // 0=IDLE, 1=DRAGGING_NEW, 2=DRAGGING_CORNER, 3=MOVING
 
-        // Selection rect (in view coordinates)
         private var selLeft = 0f
         private var selTop = 0f
         private var selRight = 0f
         private var selBottom = 0f
         private var hasSelection = false
 
-        // Drag state
-        private var dragCorner = -1  // 0=TL, 1=TR, 2=BL, 3=BR
+        private var dragCorner = -1
         private var dragStartX = 0f
         private var dragStartY = 0f
         private var dragOrigLeft = 0f
@@ -118,11 +154,10 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
         private var dragOrigRight = 0f
         private var dragOrigBottom = 0f
 
-        private val cornerRadius = 24f
+        private val cornerRadius = 28f
 
-        // Paints
         private val overlayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#AA000000")
+            color = Color.parseColor("#BB000000")
             style = Paint.Style.FILL
         }
         private val clearPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -133,7 +168,7 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
         private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#FF58A6FF")
             style = Paint.Style.STROKE
-            strokeWidth = 4f
+            strokeWidth = 5f
         }
         private val cornerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#FFFFFFFF")
@@ -159,6 +194,12 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
             style = Paint.Style.STROKE
             strokeWidth = 1f
         }
+        private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#9958A6FF")
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+            pathEffect = DashPathEffect(floatArrayOf(20f, 10f), 0f)
+        }
 
         fun startCalibration(existingRect: Rect?) {
             if (existingRect != null) {
@@ -168,13 +209,30 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                 selBottom = existingRect.bottom.toFloat()
                 hasSelection = true
                 mode = 0
-                btnSave.visibility = VISIBLE
-                btnCancel.visibility = VISIBLE
             } else {
-                hasSelection = false
-                mode = 0
-                btnSave.visibility = GONE
-                btnCancel.visibility = VISIBLE
+                // Check for incomplete calibration to resume
+                val prefs = context.getSharedPreferences("chess_solver", Context.MODE_PRIVATE)
+                val incomplete = prefs.getBoolean("calibration_incomplete", false)
+                if (incomplete) {
+                    val l = prefs.getInt("incomplete_cal_left", -1)
+                    val t = prefs.getInt("incomplete_cal_top", -1)
+                    val r = prefs.getInt("incomplete_cal_right", -1)
+                    val b = prefs.getInt("incomplete_cal_bottom", -1)
+                    if (l >= 0 && t >= 0 && r > l && b > t) {
+                        selLeft = l.toFloat()
+                        selTop = t.toFloat()
+                        selRight = r.toFloat()
+                        selBottom = b.toFloat()
+                        hasSelection = true
+                        mode = 0
+                    } else {
+                        hasSelection = false
+                        mode = 0
+                    }
+                } else {
+                    hasSelection = false
+                    mode = 0
+                }
             }
             invalidate()
         }
@@ -187,6 +245,13 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
 
         fun finalizeCalibration() {
             mode = 0
+            invalidate()
+        }
+
+        fun resetSelection() {
+            mode = 0
+            hasSelection = false
+            selLeft = 0f; selTop = 0f; selRight = 0f; selBottom = 0f
             invalidate()
         }
 
@@ -208,53 +273,36 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                 MotionEvent.ACTION_DOWN -> {
                     val x = event.x
                     val y = event.y
-
                     if (hasSelection) {
-                        // Check if touching a corner handle
                         val cornerHit = hitTestCorner(x, y)
                         if (cornerHit >= 0) {
                             mode = 2
                             dragCorner = cornerHit
-                            dragStartX = x
-                            dragStartY = y
-                            dragOrigLeft = selLeft
-                            dragOrigTop = selTop
-                            dragOrigRight = selRight
-                            dragOrigBottom = selBottom
+                            dragStartX = x; dragStartY = y
+                            dragOrigLeft = selLeft; dragOrigTop = selTop
+                            dragOrigRight = selRight; dragOrigBottom = selBottom
                             return true
                         }
-                        // Check if touching inside rect (move)
                         if (x in selLeft..selRight && y in selTop..selBottom) {
                             mode = 3
-                            dragStartX = x
-                            dragStartY = y
-                            dragOrigLeft = selLeft
-                            dragOrigTop = selTop
-                            dragOrigRight = selRight
-                            dragOrigBottom = selBottom
+                            dragStartX = x; dragStartY = y
+                            dragOrigLeft = selLeft; dragOrigTop = selTop
+                            dragOrigRight = selRight; dragOrigBottom = selBottom
                             return true
                         }
                     }
-
-                    // Start new drag
                     mode = 1
-                    selLeft = x; selTop = y
-                    selRight = x; selBottom = y
+                    selLeft = x; selTop = y; selRight = x; selBottom = y
                     hasSelection = true
                     btnSave.visibility = GONE
                     return true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val x = event.x
-                    val y = event.y
+                    val x = event.x; val y = event.y
                     when (mode) {
-                        1 -> {
-                            selRight = x; selBottom = y
-                            makeSquare()
-                        }
+                        1 -> { selRight = x; selBottom = y; makeSquare() }
                         2 -> {
-                            val dx = x - dragStartX
-                            val dy = y - dragStartY
+                            val dx = x - dragStartX; val dy = y - dragStartY
                             when (dragCorner) {
                                 0 -> { selLeft = dragOrigLeft + dx; selTop = dragOrigTop + dy }
                                 1 -> { selRight = dragOrigRight + dx; selTop = dragOrigTop + dy }
@@ -264,16 +312,12 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                             makeSquare()
                         }
                         3 -> {
-                            val dx = x - dragStartX
-                            val dy = y - dragStartY
+                            val dx = x - dragStartX; val dy = y - dragStartY
                             val w = dragOrigRight - dragOrigLeft
                             val h = dragOrigBottom - dragOrigTop
-                            selLeft = dragOrigLeft + dx
-                            selTop = dragOrigTop + dy
-                            selRight = selLeft + w
-                            selBottom = selTop + h
+                            selLeft = dragOrigLeft + dx; selTop = dragOrigTop + dy
+                            selRight = selLeft + w; selBottom = selTop + h
                         }
-                        else -> {}
                     }
                     invalidate()
                     return true
@@ -283,6 +327,7 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                         normalizeRect()
                         if (hasSelection && selRight - selLeft > 50) {
                             btnSave.visibility = VISIBLE
+                            updateSaveButtonState()
                         }
                     }
                     mode = 0
@@ -296,29 +341,22 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
         private fun hitTestCorner(x: Float, y: Float): Int {
             val hitRadius = cornerRadius * 2.5f
             val corners = listOf(
-                selLeft to selTop,       // 0: TL
-                selRight to selTop,      // 1: TR
-                selLeft to selBottom,    // 2: BL
-                selRight to selBottom    // 3: BR
+                selLeft to selTop, selRight to selTop,
+                selLeft to selBottom, selRight to selBottom
             )
             for ((i, pair) in corners.withIndex()) {
-                val dx = x - pair.first
-                val dy = y - pair.second
+                val dx = x - pair.first; val dy = y - pair.second
                 if (dx * dx + dy * dy < hitRadius * hitRadius) return i
             }
             return -1
         }
 
         private fun makeSquare() {
-            val w = Math.abs(selRight - selLeft)
-            val h = Math.abs(selBottom - selTop)
+            val w = Math.abs(selRight - selLeft); val h = Math.abs(selBottom - selTop)
             val size = Math.max(w, h)
-            val cx = (selLeft + selRight) / 2f
-            val cy = (selTop + selBottom) / 2f
-            selLeft = cx - size / 2f
-            selRight = cx + size / 2f
-            selTop = cy - size / 2f
-            selBottom = cy + size / 2f
+            val cx = (selLeft + selRight) / 2f; val cy = (selTop + selBottom) / 2f
+            selLeft = cx - size / 2f; selRight = cx + size / 2f
+            selTop = cy - size / 2f; selBottom = cy + size / 2f
         }
 
         private fun normalizeRect() {
@@ -329,53 +367,36 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             if (!hasSelection) {
-                // Just draw instruction
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), overlayPaint)
                 drawInstructionText(canvas, "Drag to select the chess board area")
+                val cx = width / 2f; val cy = height / 2f; val hintSize = 200f
+                canvas.drawRect(cx - hintSize, cy - hintSize, cx + hintSize, cy + hintSize, hintPaint)
                 return
             }
-
             normalizeRect()
-
-            // Draw dim overlay
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), overlayPaint)
-
-            // Clear the selection area
             canvas.drawRect(selLeft, selTop, selRight, selBottom, clearPaint)
 
-            // Draw 8x8 grid lines inside selection
-            val cellW = (selRight - selLeft) / 8f
-            val cellH = (selBottom - selTop) / 8f
+            val cellW = (selRight - selLeft) / 8f; val cellH = (selBottom - selTop) / 8f
             for (i in 1 until 8) {
-                val x = selLeft + i * cellW
-                canvas.drawLine(x, selTop, x, selBottom, gridPaint)
-                val y = selTop + i * cellH
-                canvas.drawLine(selLeft, y, selRight, y, gridPaint)
+                val x = selLeft + i * cellW; canvas.drawLine(x, selTop, x, selBottom, gridPaint)
+                val y = selTop + i * cellH; canvas.drawLine(selLeft, y, selRight, y, gridPaint)
             }
-
-            // Draw border
             canvas.drawRect(selLeft, selTop, selRight, selBottom, borderPaint)
 
-            // Draw corner handles
-            val corners = listOf(
-                selLeft to selTop,
-                selRight to selTop,
-                selLeft to selBottom,
-                selRight to selBottom
-            )
+            val corners = listOf(selLeft to selTop, selRight to selTop, selLeft to selBottom, selRight to selBottom)
             for ((cx, cy) in corners) {
                 canvas.drawCircle(cx, cy, cornerRadius, cornerStrokePaint)
                 canvas.drawCircle(cx, cy, cornerRadius - 3f, cornerPaint)
             }
-
-            // Draw instruction
-            drawInstructionText(canvas, "Drag corners to adjust • Save when done")
+            drawInstructionText(canvas, "Drag corners to adjust, then SAVE")
         }
 
         private fun drawInstructionText(canvas: Canvas, text: String) {
-            val textY = 80f
+            val textY = 100f
             val textWidth = textPaint.measureText(text)
-            canvas.drawRect(width / 2f - textWidth / 2f - 20f, textY - 40f, width / 2f + textWidth / 2f + 20f, textY + 15f, textBgPaint)
+            canvas.drawRect(width / 2f - textWidth / 2f - 24f, textY - 44f,
+                width / 2f + textWidth / 2f + 24f, textY + 15f, textBgPaint)
             canvas.drawText(text, width / 2f, textY, textPaint)
         }
     }
