@@ -23,98 +23,61 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
 
-    - name: Install Android NDK
+    - name: Download Stockfish Android binaries
       run: |
-        echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125" 2>/dev/null || true
-        NDK_DIR=$(ls -d ${ANDROID_HOME}/ndk/* | head -1)
-        echo "NDK_PATH=$NDK_DIR" >> $GITHUB_ENV
-        echo "NDK at: $NDK_DIR"
-
-    - name: Compile Stockfish for Android
-      run: |
-        # Clone Stockfish
-        git clone --depth 1 --branch sf_17.1 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish-src || \
-        git clone --depth 1 --branch sf_16.1 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish-src
-        
-        # Patch Stockfish Makefile: Android doesn't have -lpthread (it's built into Bionic)
-        cd /tmp/stockfish-src/src
-        sed -i 's/-lpthread//' Makefile
-        
-        TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
-        
-        # Create output directories
         mkdir -p app/src/main/assets/stockfish/arm64-v8a
         mkdir -p app/src/main/assets/stockfish/armeabi-v7a
         mkdir -p app/src/main/assets/stockfish/x86_64
         mkdir -p app/src/main/assets/stockfish/x86
 
-        # === Compile for arm64-v8a ===
-        echo "=== Compiling for arm64-v8a ==="
-        cd /tmp/stockfish-src/src
-        make clean 2>/dev/null || true
-        make -j$(nproc) build \
-          ARCH=armv8 \
-          COMP=clang \
-          CXX="$TOOLCHAIN/bin/aarch64-linux-android34-clang++" \
-          CC="$TOOLCHAIN/bin/aarch64-linux-android34-clang" \
-          EXE=stockfish 2>&1 && \
-        cp stockfish $GITHUB_WORKSPACE/app/src/main/assets/stockfish/arm64-v8a/stockfish && \
-        chmod +x $GITHUB_WORKSPACE/app/src/main/assets/stockfish/arm64-v8a/stockfish && \
-        echo "arm64-v8a: OK" || echo "arm64-v8a: FAILED"
+        SF_TAG="sf_18"
+        SF_BASE="https://github.com/official-stockfish/Stockfish/releases/download/${SF_TAG}"
 
-        # === Compile for armeabi-v7a ===
-        echo "=== Compiling for armeabi-v7a ==="
-        cd /tmp/stockfish-src/src
-        make clean 2>/dev/null || true
-        make -j$(nproc) build \
-          ARCH=armv7-neon \
-          COMP=clang \
-          CXX="$TOOLCHAIN/bin/armv7a-linux-androideabi34-clang++" \
-          CC="$TOOLCHAIN/bin/armv7a-linux-androideabi34-clang" \
-          EXE=stockfish 2>&1 && \
-        cp stockfish $GITHUB_WORKSPACE/app/src/main/assets/stockfish/armeabi-v7a/stockfish && \
-        chmod +x $GITHUB_WORKSPACE/app/src/main/assets/stockfish/armeabi-v7a/stockfish && \
-        echo "armeabi-v7a: OK" || echo "armeabi-v7a: FAILED"
+        # === arm64-v8a (most Android phones) ===
+        echo "Downloading Stockfish arm64-v8a..."
+        curl -sL "${SF_BASE}/stockfish-android-armv8.tar" -o /tmp/sf_arm64.tar
+        mkdir -p /tmp/sf_arm64 && tar xf /tmp/sf_arm64.tar -C /tmp/sf_arm64 2>/dev/null
+        find /tmp/sf_arm64 -name "stockfish" -type f | head -1 | xargs -I{} cp {} app/src/main/assets/stockfish/arm64-v8a/stockfish 2>/dev/null || true
 
-        # === Compile for x86_64 ===
-        echo "=== Compiling for x86_64 ==="
-        cd /tmp/stockfish-src/src
-        make clean 2>/dev/null || true
-        make -j$(nproc) build \
-          ARCH=x86-64-sse41-popcnt \
-          COMP=clang \
-          CXX="$TOOLCHAIN/bin/x86_64-linux-android34-clang++" \
-          CC="$TOOLCHAIN/bin/x86_64-linux-android34-clang" \
-          EXE=stockfish 2>&1 && \
-        cp stockfish $GITHUB_WORKSPACE/app/src/main/assets/stockfish/x86_64/stockfish && \
-        chmod +x $GITHUB_WORKSPACE/app/src/main/assets/stockfish/x86_64/stockfish && \
-        echo "x86_64: OK" || echo "x86_64: FAILED"
+        # === armeabi-v7a (older Android phones) ===
+        echo "Downloading Stockfish armeabi-v7a..."
+        curl -sL "${SF_BASE}/stockfish-android-armv7-neon.tar" -o /tmp/sf_armv7.tar
+        mkdir -p /tmp/sf_armv7 && tar xf /tmp/sf_armv7.tar -C /tmp/sf_armv7 2>/dev/null
+        find /tmp/sf_armv7 -name "stockfish" -type f | head -1 | xargs -I{} cp {} app/src/main/assets/stockfish/armeabi-v7a/stockfish 2>/dev/null || true
 
-        # === Compile for x86 ===
-        echo "=== Compiling for x86 ==="
-        cd /tmp/stockfish-src/src
-        make clean 2>/dev/null || true
-        make -j$(nproc) build \
-          ARCH=x86-32-sse41-popcnt \
-          COMP=clang \
-          CXX="$TOOLCHAIN/bin/i686-linux-android34-clang++" \
-          CC="$TOOLCHAIN/bin/i686-linux-android34-clang" \
-          EXE=stockfish 2>&1 && \
-        cp stockfish $GITHUB_WORKSPACE/app/src/main/assets/stockfish/x86/stockfish && \
-        chmod +x $GITHUB_WORKSPACE/app/src/main/assets/stockfish/x86/stockfish && \
-        echo "x86: OK" || echo "x86: FAILED"
+        # x86_64 and x86: no official Android builds exist, so we leave them empty
+        # The Kotlin engine will be used as fallback on emulators
 
-        # List results
-        echo "=== Stockfish binary results ==="
+        # Make executable
+        chmod +x app/src/main/assets/stockfish/*/stockfish 2>/dev/null || true
+
+        # === VERIFY ===
+        echo "=== Stockfish binary verification ==="
+        SUCCESS=0
         for abi in arm64-v8a armeabi-v7a x86_64 x86; do
-          if [ -f "$GITHUB_WORKSPACE/app/src/main/assets/stockfish/$abi/stockfish" ]; then
-            SIZE=$(stat -c%s "$GITHUB_WORKSPACE/app/src/main/assets/stockfish/$abi/stockfish" 2>/dev/null || echo "0")
-            echo "  $abi: $SIZE bytes"
-            file "$GITHUB_WORKSPACE/app/src/main/assets/stockfish/$abi/stockfish" 2>/dev/null || true
+          FILE="app/src/main/assets/stockfish/$abi/stockfish"
+          if [ -f "$FILE" ]; then
+            SIZE=$(stat -c%s "$FILE" 2>/dev/null || echo "0")
+            TYPE=$(file "$FILE" 2>/dev/null || echo "unknown")
+            # Check it's actually an ELF binary
+            FIRST=$(xxd -l 4 "$FILE" 2>/dev/null | head -1)
+            echo "  $abi: $SIZE bytes | $TYPE | $FIRST"
+            if echo "$TYPE" | grep -qi "ELF"; then
+              echo "  $abi: REAL ELF BINARY"
+              SUCCESS=$((SUCCESS+1))
+            else
+              echo "  $abi: NOT AN ELF - REMOVING"
+              rm -f "$FILE"
+            fi
           else
-            echo "  $abi: MISSING"
+            echo "  $abi: MISSING (will use Kotlin fallback)"
           fi
         done
+
+        echo "=== $SUCCESS real Stockfish binaries found ==="
+        if [ $SUCCESS -eq 0 ]; then
+          echo "WARNING: No Stockfish binaries! App will use Kotlin fallback engine."
+        fi
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
