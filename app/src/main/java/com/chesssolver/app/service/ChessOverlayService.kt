@@ -20,6 +20,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -27,10 +28,12 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import com.chesssolver.app.detection.ChessBoardDetector
-import com.chesssolver.app.engine.StockfishEngine
+import com.chesssolver.app.engine.ChessEngine
 import com.chesssolver.app.overlay.ArrowOverlayView
+import com.chesssolver.app.overlay.CalibrationOverlayView
 import com.chesssolver.app.R
 import kotlinx.coroutines.*
 
@@ -55,8 +58,10 @@ class ChessOverlayService : Service() {
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
     private var arrowOverlayView: ArrowOverlayView? = null
+    private var calibrationOverlayView: CalibrationOverlayView? = null
+    private var statusTextView: TextView? = null
 
-    private val engine = StockfishEngine()
+    private val engine = ChessEngine()
     private val detector = ChessBoardDetector()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -64,9 +69,13 @@ class ChessOverlayService : Service() {
     private var screenHeight = 0
     private var densityDpi = 0
 
-    // Continuously track the latest frame
+    // Manual calibration rect (set by user)
+    private var calibratedRect: Rect? = null
+
     @Volatile
     private var isProcessing = false
+    @Volatile
+    private var isCalibrating = false
 
     override fun onCreate() {
         super.onCreate()
@@ -80,8 +89,15 @@ class ChessOverlayService : Service() {
         screenHeight = metrics.heightPixels
         densityDpi = metrics.densityDpi
 
-        // Initialize Stockfish engine
-        engine.ensureInitialized(this)
+        // Load saved calibration
+        val prefs = getSharedPreferences("chess_solver", Context.MODE_PRIVATE)
+        val calLeft = prefs.getInt("cal_left", -1)
+        val calTop = prefs.getInt("cal_top", -1)
+        val calRight = prefs.getInt("cal_right", -1)
+        val calBottom = prefs.getInt("cal_bottom", -1)
+        if (calLeft >= 0 && calTop >= 0 && calRight > calLeft && calBottom > calTop) {
+            calibratedRect = Rect(calLeft, calTop, calRight, calBottom)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -114,8 +130,6 @@ class ChessOverlayService : Service() {
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
-        // Create ImageReader that receives continuous frames from virtual display
-        // We use a lower resolution for performance while still being accurate enough
         val captureWidth = screenWidth
         val captureHeight = screenHeight
 
@@ -128,7 +142,6 @@ class ChessOverlayService : Service() {
                 if (image != null && !isProcessing) {
                     val bitmap = imageToBitmap(image)
                     if (bitmap != null) {
-                        // Keep the latest frame always available
                         val old = latestBitmap
                         latestBitmap = bitmap
                         old?.recycle()
@@ -150,7 +163,6 @@ class ChessOverlayService : Service() {
             null, captureHandler
         )
 
-        // Register callback to know when projection stops
         mediaProjection!!.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 stopSelf()
@@ -170,7 +182,6 @@ class ChessOverlayService : Service() {
         buffer.rewind()
         bitmap.copyPixelsFromBuffer(buffer)
 
-        // Crop to remove padding
         return if (rowPadding == 0) {
             bitmap
         } else {
@@ -182,7 +193,9 @@ class ChessOverlayService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupOverlay() {
-        // Create floating button overlay
+        val density = resources.displayMetrics.density
+
+        // ===== Main floating control panel =====
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -192,83 +205,105 @@ class ChessOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 50
+            x = 20
             y = 100
         }
 
-        // Create overlay layout programmatically
         val container = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.parseColor("#CC000000"))
-            val pad = (4 * resources.displayMetrics.density).toInt()
+            orientation = LinearLayout.VERTICAL
+            val pad = (8 * density).toInt()
             setPadding(pad, pad, pad, pad)
-            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#E0222222"))
+                cornerRadius = 24f * density
+            }
         }
 
-        // Rounded background
-        val bgDrawable = GradientDrawable().apply {
-            setColor(Color.parseColor("#CC000000"))
-            cornerRadius = 20f * resources.displayMetrics.density
+        // Status text
+        statusTextView = TextView(this).apply {
+            text = "Ready"
+            setTextColor(Color.parseColor("#B0BEC5"))
+            textSize = 12f
+            gravity = Gravity.CENTER
+            val margin = (4 * density).toInt()
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(margin, 0, margin, margin) }
         }
-        container.background = bgDrawable
+        container.addView(statusTextView)
+
+        // Button row
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
 
         val btnMyMove = Button(this).apply {
-            text = "My Move Now"
+            text = "♞ My Move"
             setTextColor(Color.WHITE)
-            textSize = 13f
+            textSize = 14f
             setAllCaps(false)
-            val moveBg = GradientDrawable().apply {
+            background = GradientDrawable().apply {
                 setColor(Color.parseColor("#4CAF50"))
-                cornerRadius = 16f * resources.displayMetrics.density
+                cornerRadius = 16f * density
             }
-            background = moveBg
-            val hPad = (12 * resources.displayMetrics.density).toInt()
-            val vPad = (8 * resources.displayMetrics.density).toInt()
+            val hPad = (16 * density).toInt()
+            val vPad = (10 * density).toInt()
             setPadding(hPad, vPad, hPad, vPad)
-            minWidth = (120 * resources.displayMetrics.density).toInt()
-
             setOnClickListener {
-                onMyMoveNow()
+                if (!isProcessing) onMyMoveNow()
+            }
+        }
+
+        val btnCalibrate = Button(this).apply {
+            text = "◎"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setAllCaps(false)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#FF9800"))
+                cornerRadius = 16f * density
+            }
+            val hPad = (10 * density).toInt()
+            val vPad = (10 * density).toInt()
+            setPadding(hPad, vPad, hPad, vPad)
+            setOnClickListener {
+                startCalibration()
             }
         }
 
         val btnClose = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
             setBackgroundColor(Color.TRANSPARENT)
-            val size = (32 * resources.displayMetrics.density).toInt()
+            val size = (32 * density).toInt()
             layoutParams = LinearLayout.LayoutParams(size, size)
-            setOnClickListener {
-                stopSelf()
-            }
+            setOnClickListener { stopSelf() }
         }
 
-        container.addView(btnMyMove)
-        container.addView(btnClose)
+        buttonRow.addView(btnMyMove)
+        buttonRow.addView(btnCalibrate)
+        buttonRow.addView(btnClose)
+        container.addView(buttonRow)
         overlayView = container
 
-        // Drag handling
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
+        // Drag handling for the floating panel
+        var initialX = 0; var initialY = 0
+        var initialTouchX = 0f; var initialTouchY = 0f
         var isDragging = false
 
         container.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x
-                    initialY = params.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
+                    initialX = params.x; initialY = params.y
+                    initialTouchX = event.rawX; initialTouchY = event.rawY
                     isDragging = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - initialTouchX
                     val dy = event.rawY - initialTouchY
-                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                        isDragging = true
-                    }
+                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) isDragging = true
                     if (isDragging) {
                         params.x = initialX + dx.toInt()
                         params.y = initialY + dy.toInt()
@@ -277,14 +312,7 @@ class ChessOverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (isDragging) {
-                        // Was dragging, don't click
-                        true
-                    } else {
-                        // Not dragging, let click handlers work
-                        container.performClick()
-                        false
-                    }
+                    if (isDragging) true else { container.performClick(); false }
                 }
                 else -> false
             }
@@ -292,8 +320,11 @@ class ChessOverlayService : Service() {
 
         windowManager?.addView(container, params)
 
-        // Setup arrow overlay (full screen, transparent, draws the arrow)
+        // ===== Arrow overlay =====
         setupArrowOverlay()
+
+        // ===== Calibration overlay (initially hidden) =====
+        setupCalibrationOverlay()
     }
 
     private fun setupArrowOverlay() {
@@ -305,12 +336,70 @@ class ChessOverlayService : Service() {
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-        }
+        ).apply { gravity = Gravity.TOP or Gravity.START }
 
         arrowOverlayView = ArrowOverlayView(this)
         windowManager?.addView(arrowOverlayView, arrowParams)
+    }
+
+    private fun setupCalibrationOverlay() {
+        val calParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+        calibrationOverlayView = CalibrationOverlayView(this)
+        calibrationOverlayView?.onCalibrationComplete = { rect ->
+            calibratedRect = rect
+            isCalibrating = false
+
+            // Save calibration
+            getSharedPreferences("chess_solver", Context.MODE_PRIVATE).edit().apply {
+                putInt("cal_left", rect.left)
+                putInt("cal_top", rect.top)
+                putInt("cal_right", rect.right)
+                putInt("cal_bottom", rect.bottom)
+                apply()
+            }
+
+            // Make calibration overlay not touchable again
+            val newParams = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply { gravity = Gravity.TOP or Gravity.START }
+            windowManager?.updateViewLayout(calibrationOverlayView, newParams)
+
+            statusTextView?.text = "Calibrated ✓"
+            Toast.makeText(this, "Board region set! Tap 'My Move' to solve.", Toast.LENGTH_SHORT).show()
+        }
+        windowManager?.addView(calibrationOverlayView, calParams)
+    }
+
+    private fun startCalibration() {
+        isCalibrating = true
+        statusTextView?.text = "Drag to select board..."
+
+        // Make calibration overlay touchable
+        val calParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+        windowManager?.updateViewLayout(calibrationOverlayView, calParams)
+        calibrationOverlayView?.startCalibration()
     }
 
     private fun onMyMoveNow() {
@@ -321,17 +410,29 @@ class ChessOverlayService : Service() {
         }
 
         isProcessing = true
+        statusTextView?.text = "Analyzing..."
 
         serviceScope.launch {
             try {
-                // Step 1: Detect chess board from the live screen frame
+                // Step 1: Detect chess board
                 val boardResult = withContext(Dispatchers.Default) {
-                    detector.detectBoard(currentBitmap)
+                    if (calibratedRect != null) {
+                        // Use calibrated region
+                        detector.detectBoardInRegion(currentBitmap, calibratedRect!!)
+                    } else {
+                        // Auto-detect
+                        detector.detectBoard(currentBitmap)
+                    }
                 }
 
                 if (boardResult == null) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@ChessOverlayService, "No chess board detected. Make sure a board is visible.", Toast.LENGTH_LONG).show()
+                        statusTextView?.text = "No board found"
+                        Toast.makeText(
+                            this@ChessOverlayService,
+                            "No chess board detected.\nTry: Tap ◎ to calibrate the board area manually.",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                     return@launch
                 }
@@ -341,23 +442,28 @@ class ChessOverlayService : Service() {
                     detector.boardToFEN(boardResult)
                 }
 
-                // Step 3: Get best move from Stockfish
+                statusTextView?.text = "Thinking..."
+
+                // Step 3: Get best move from our built-in engine
                 val bestMove = withContext(Dispatchers.Default) {
-                    if (!engine.ensureInitialized(this@ChessOverlayService)) {
+                    try {
+                        engine.setPosition(fen)
+                        engine.getBestMove(depth = 4, timeMs = 3000)
+                    } catch (e: Exception) {
+                        Log.e("ChessSolver", "Engine error", e)
                         null
-                    } else {
-                        engine.getBestMove(fen)
                     }
                 }
 
-                if (bestMove == null) {
+                if (bestMove == null || bestMove.length < 4) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@ChessOverlayService, "Engine failed to find a move.", Toast.LENGTH_SHORT).show()
+                        statusTextView?.text = "No move found"
+                        Toast.makeText(this@ChessOverlayService, "Engine couldn't find a move. Try calibrating.", Toast.LENGTH_SHORT).show()
                     }
                     return@launch
                 }
 
-                // Step 4: Draw arrow on overlay
+                // Step 4: Draw arrow
                 withContext(Dispatchers.Main) {
                     val fromSquare = bestMove.substring(0, 2)
                     val toSquare = bestMove.substring(2, 4)
@@ -367,16 +473,19 @@ class ChessOverlayService : Service() {
                         toSquare,
                         boardResult.isFlipped
                     )
+                    statusTextView?.text = "Best: $fromSquare → $toSquare"
                 }
 
-                // Auto-hide arrow after 4 seconds
-                delay(4000)
+                // Auto-hide arrow after 5 seconds
+                delay(5000)
                 withContext(Dispatchers.Main) {
                     arrowOverlayView?.clearArrow()
+                    statusTextView?.text = "Ready"
                 }
 
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
+                    statusTextView?.text = "Error"
                     Toast.makeText(this@ChessOverlayService, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             } finally {
@@ -391,11 +500,8 @@ class ChessOverlayService : Service() {
                 CHANNEL_ID,
                 getString(R.string.channel_name),
                 NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Chess Solver overlay notification"
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            ).apply { description = "Chess Solver overlay notification" }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
@@ -426,9 +532,9 @@ class ChessOverlayService : Service() {
 
         overlayView?.let { windowManager?.removeView(it) }
         arrowOverlayView?.let { windowManager?.removeView(it) }
+        calibrationOverlayView?.let { windowManager?.removeView(it) }
 
         handlerThread.quitSafely()
-        engine.destroy()
 
         getSharedPreferences("chess_solver", Context.MODE_PRIVATE)
             .edit().putBoolean("is_running", false).apply()
