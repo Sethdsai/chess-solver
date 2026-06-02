@@ -36,6 +36,10 @@ jobs:
         git clone --depth 1 --branch sf_17.1 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish-src || \
         git clone --depth 1 --branch sf_16.1 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish-src
         
+        # Patch Stockfish Makefile: Android doesn't have -lpthread (it's built into Bionic)
+        cd /tmp/stockfish-src/src
+        sed -i 's/-lpthread//' Makefile
+        
         TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
         
         # Create output directories
