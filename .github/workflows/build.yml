@@ -39,9 +39,15 @@ jobs:
         echo "Downloaded arm64 tar: $(stat -c%s /tmp/sf_arm64.tar 2>/dev/null || echo 'MISSING') bytes"
         mkdir -p /tmp/sf_arm64
         tar xf /tmp/sf_arm64.tar -C /tmp/sf_arm64
-        echo "Tar contents:"
-        find /tmp/sf_arm64 -type f | head -10
-        SF_BIN=$(find /tmp/sf_arm64 -name "stockfish" -type f | head -1)
+        echo "All files in tar:"
+        find /tmp/sf_arm64 -type f -executable | head -10
+        find /tmp/sf_arm64 -type f -name "*.exe" -o -name "stockfish*" -not -name "*.txt" -not -name "*.md" -not -name "*.cff" | head -10
+        # The binary might be named stockfish-android-armv8 or just in a bin/ dir
+        SF_BIN=$(find /tmp/sf_arm64 -type f -executable -not -name "*.txt" -not -name "*.md" -not -name "*.cff" -not -name "*.py" | head -1)
+        if [ -z "$SF_BIN" ]; then
+          # Try any file that's not a text/doc file
+          SF_BIN=$(find /tmp/sf_arm64 -type f ! -name "*.txt" ! -name "*.md" ! -name "*.cff" ! -name "*.py" ! -name "AUTHORS" ! -name "Copying" ! -path "*/wiki/*" ! -path "*/.git/*" | head -1)
+        fi
         if [ -n "$SF_BIN" ]; then
           cp "$SF_BIN" app/src/main/assets/stockfish/arm64-v8a/stockfish
           chmod +x app/src/main/assets/stockfish/arm64-v8a/stockfish
@@ -56,9 +62,13 @@ jobs:
         echo "Downloaded armv7 tar: $(stat -c%s /tmp/sf_armv7.tar 2>/dev/null || echo 'MISSING') bytes"
         mkdir -p /tmp/sf_armv7
         tar xf /tmp/sf_armv7.tar -C /tmp/sf_armv7
-        echo "Tar contents:"
-        find /tmp/sf_armv7 -type f | head -10
-        SF_BIN=$(find /tmp/sf_armv7 -name "stockfish" -type f | head -1)
+        echo "All files in tar:"
+        find /tmp/sf_armv7 -type f -executable | head -10
+        find /tmp/sf_armv7 -type f -name "*.exe" -o -name "stockfish*" -not -name "*.txt" -not -name "*.md" -not -name "*.cff" | head -10
+        SF_BIN=$(find /tmp/sf_armv7 -type f -executable -not -name "*.txt" -not -name "*.md" -not -name "*.cff" -not -name "*.py" | head -1)
+        if [ -z "$SF_BIN" ]; then
+          SF_BIN=$(find /tmp/sf_armv7 -type f ! -name "*.txt" ! -name "*.md" ! -name "*.cff" ! -name "*.py" ! -name "AUTHORS" ! -name "Copying" ! -path "*/wiki/*" ! -path "*/.git/*" | head -1)
+        fi
         if [ -n "$SF_BIN" ]; then
           cp "$SF_BIN" app/src/main/assets/stockfish/armeabi-v7a/stockfish
           chmod +x app/src/main/assets/stockfish/armeabi-v7a/stockfish
