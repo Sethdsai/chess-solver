@@ -3,6 +3,7 @@ package com.chesssolver.app.overlay
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.*
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
@@ -99,8 +100,7 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
 
     inner class DrawingView(ctx: Context) : View(ctx) {
 
-        private enum class Mode { IDLE, DRAGGING_NEW, DRAGGING_CORNER, MOVING }
-        private var mode = Mode.IDLE
+        private var mode = 0  // 0=IDLE, 1=DRAGGING_NEW, 2=DRAGGING_CORNER, 3=MOVING
 
         // Selection rect (in view coordinates)
         private var selLeft = 0f
@@ -167,12 +167,12 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                 selRight = existingRect.right.toFloat()
                 selBottom = existingRect.bottom.toFloat()
                 hasSelection = true
-                mode = Mode.IDLE
+                mode = 0
                 btnSave.visibility = VISIBLE
                 btnCancel.visibility = VISIBLE
             } else {
                 hasSelection = false
-                mode = Mode.IDLE
+                mode = 0
                 btnSave.visibility = GONE
                 btnCancel.visibility = VISIBLE
             }
@@ -180,13 +180,13 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
         }
 
         fun cancelCalibration() {
-            mode = Mode.IDLE
+            mode = 0
             hasSelection = false
             invalidate()
         }
 
         fun finalizeCalibration() {
-            mode = Mode.IDLE
+            mode = 0
             invalidate()
         }
 
@@ -213,7 +213,7 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                         // Check if touching a corner handle
                         val cornerHit = hitTestCorner(x, y)
                         if (cornerHit >= 0) {
-                            mode = Mode.DRAGGING_CORNER
+                            mode = 2
                             dragCorner = cornerHit
                             dragStartX = x
                             dragStartY = y
@@ -225,7 +225,7 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                         }
                         // Check if touching inside rect (move)
                         if (x in selLeft..selRight && y in selTop..selBottom) {
-                            mode = Mode.MOVING
+                            mode = 3
                             dragStartX = x
                             dragStartY = y
                             dragOrigLeft = selLeft
@@ -237,7 +237,7 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                     }
 
                     // Start new drag
-                    mode = Mode.DRAGGING_NEW
+                    mode = 1
                     selLeft = x; selTop = y
                     selRight = x; selBottom = y
                     hasSelection = true
@@ -248,11 +248,11 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                     val x = event.x
                     val y = event.y
                     when (mode) {
-                        Mode.DRAGGING_NEW -> {
+                        1 -> {
                             selRight = x; selBottom = y
                             makeSquare()
                         }
-                        Mode.DRAGGING_CORNER -> {
+                        2 -> {
                             val dx = x - dragStartX
                             val dy = y - dragStartY
                             when (dragCorner) {
@@ -263,7 +263,7 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                             }
                             makeSquare()
                         }
-                        Mode.MOVING -> {
+                        3 -> {
                             val dx = x - dragStartX
                             val dy = y - dragStartY
                             val w = dragOrigRight - dragOrigLeft
@@ -279,13 +279,13 @@ class CalibrationOverlayView(context: Context) : FrameLayout(context) {
                     return true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (mode == Mode.DRAGGING_NEW || mode == Mode.DRAGGING_CORNER || mode == Mode.MOVING) {
+                    if (mode == 1 || mode == 2 || mode == 3) {
                         normalizeRect()
                         if (hasSelection && selRight - selLeft > 50) {
                             btnSave.visibility = VISIBLE
                         }
                     }
-                    mode = Mode.IDLE
+                    mode = 0
                     invalidate()
                     return true
                 }

@@ -26,20 +26,15 @@ jobs:
     - name: Install Android NDK
       run: |
         echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125" 2>/dev/null || true
-        echo "NDK installed at: ${ANDROID_HOME}/ndk/26.1.10909125"
-        ls ${ANDROID_HOME}/ndk/ 2>/dev/null || echo "NDK dir not found"
+        NDK_DIR=$(ls -d ${ANDROID_HOME}/ndk/* | head -1)
+        echo "NDK_PATH=$NDK_DIR" >> $GITHUB_ENV
+        echo "NDK at: $NDK_DIR"
 
     - name: Compile Stockfish for Android
       run: |
         # Clone Stockfish
-        git clone --depth 1 --branch sf_17.1 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish-src
-        
-        # Find NDK
-        NDK_PATH="${ANDROID_HOME}/ndk/26.1.10909125"
-        if [ ! -d "$NDK_PATH" ]; then
-          NDK_PATH=$(ls -d ${ANDROID_HOME}/ndk/* | head -1)
-        fi
-        echo "Using NDK at: $NDK_PATH"
+        git clone --depth 1 --branch sf_17.1 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish-src || \
+        git clone --depth 1 --branch sf_16.1 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish-src
         
         TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
         
@@ -48,75 +43,70 @@ jobs:
         mkdir -p app/src/main/assets/stockfish/armeabi-v7a
         mkdir -p app/src/main/assets/stockfish/x86_64
         mkdir -p app/src/main/assets/stockfish/x86
-        
-        # Function to compile Stockfish for a target
-        compile_stockfish() {
-          local ABI=$1
-          local ARCH=$2
-          local COMPILER=$3
-          
-          echo "Compiling Stockfish for $ABI..."
-          cd /tmp/stockfish-src/src
-          make clean 2>/dev/null || true
-          
-          CXX="$TOOLCHAIN/bin/$COMPILER" \
-          CC="$TOOLCHAIN/bin/$COMPILER" \
-          make -j$(nproc) build \
-            ARCH=$ARCH \
-            COMP=clang \
-            EXE=stockfish \
-            2>&1 || { echo "Failed to compile for $ABI"; return 1; }
-          
-          if [ -f stockfish ]; then
-            cp stockfish app/src/main/assets/stockfish/$ABI/stockfish
-            chmod +x app/src/main/assets/stockfish/$ABI/stockfish
-            file app/src/main/assets/stockfish/$ABI/stockfish
-            echo "Successfully compiled for $ABI ($(stat -f%z app/src/main/assets/stockfish/$ABI/stockfish 2>/dev/null || stat -c%s app/src/main/assets/stockfish/$ABI/stockfish) bytes)"
-          else
-            echo "No binary produced for $ABI"
-          fi
-        }
-        
-        # Compile for arm64-v8a
-        compile_stockfish "arm64-v8a" "armv8" "aarch64-linux-android34-clang++" || true
-        
-        # Compile for armeabi-v7a
-        compile_stockfish "armeabi-v7a" "armv7-neon" "armv7a-linux-androideabi34-clang++" || true
-        
-        # Compile for x86_64
-        compile_stockfish "x86_64" "x86-64-modern" "x86_64-linux-android34-clang++" || true
-        
-        # Compile for x86
-        compile_stockfish "x86" "x86-32-sse41-popcnt" "i686-linux-android34-clang++" || true
-        
-        # List what we got
-        echo "=== Compiled Stockfish binaries ==="
-        ls -la app/src/main/assets/stockfish/*/stockfish 2>/dev/null || echo "No binaries found"
-        
-        # Verify at least arm64 was built (most common Android)
-        if [ ! -f "app/src/main/assets/stockfish/arm64-v8a/stockfish" ]; then
-          echo "WARNING: No arm64 binary, trying alternative compile approach..."
-          cd /tmp/stockfish-src/src
-          make clean 2>/dev/null || true
-          make -j$(nproc) build ARCH=armv8 COMP=clang \
-            CXX="$TOOLCHAIN/bin/aarch64-linux-android34-clang++" \
-            CC="$TOOLCHAIN/bin/aarch64-linux-android34-clang" \
-            EXE=stockfish 2>&1 || true
-          if [ -f stockfish ]; then
-            cp stockfish app/src/main/assets/stockfish/arm64-v8a/stockfish
-            chmod +x app/src/main/assets/stockfish/arm64-v8a/stockfish
-            echo "Alternative compile produced arm64 binary"
-          fi
-        fi
 
-    - name: Verify Stockfish binaries
-      run: |
-        echo "=== Final Stockfish binary check ==="
+        # === Compile for arm64-v8a ===
+        echo "=== Compiling for arm64-v8a ==="
+        cd /tmp/stockfish-src/src
+        make clean 2>/dev/null || true
+        make -j$(nproc) build \
+          ARCH=armv8 \
+          COMP=clang \
+          CXX="$TOOLCHAIN/bin/aarch64-linux-android34-clang++" \
+          CC="$TOOLCHAIN/bin/aarch64-linux-android34-clang" \
+          EXE=stockfish 2>&1 && \
+        cp stockfish $GITHUB_WORKSPACE/app/src/main/assets/stockfish/arm64-v8a/stockfish && \
+        chmod +x $GITHUB_WORKSPACE/app/src/main/assets/stockfish/arm64-v8a/stockfish && \
+        echo "arm64-v8a: OK" || echo "arm64-v8a: FAILED"
+
+        # === Compile for armeabi-v7a ===
+        echo "=== Compiling for armeabi-v7a ==="
+        cd /tmp/stockfish-src/src
+        make clean 2>/dev/null || true
+        make -j$(nproc) build \
+          ARCH=armv7-neon \
+          COMP=clang \
+          CXX="$TOOLCHAIN/bin/armv7a-linux-androideabi34-clang++" \
+          CC="$TOOLCHAIN/bin/armv7a-linux-androideabi34-clang" \
+          EXE=stockfish 2>&1 && \
+        cp stockfish $GITHUB_WORKSPACE/app/src/main/assets/stockfish/armeabi-v7a/stockfish && \
+        chmod +x $GITHUB_WORKSPACE/app/src/main/assets/stockfish/armeabi-v7a/stockfish && \
+        echo "armeabi-v7a: OK" || echo "armeabi-v7a: FAILED"
+
+        # === Compile for x86_64 ===
+        echo "=== Compiling for x86_64 ==="
+        cd /tmp/stockfish-src/src
+        make clean 2>/dev/null || true
+        make -j$(nproc) build \
+          ARCH=x86-64-sse41-popcnt \
+          COMP=clang \
+          CXX="$TOOLCHAIN/bin/x86_64-linux-android34-clang++" \
+          CC="$TOOLCHAIN/bin/x86_64-linux-android34-clang" \
+          EXE=stockfish 2>&1 && \
+        cp stockfish $GITHUB_WORKSPACE/app/src/main/assets/stockfish/x86_64/stockfish && \
+        chmod +x $GITHUB_WORKSPACE/app/src/main/assets/stockfish/x86_64/stockfish && \
+        echo "x86_64: OK" || echo "x86_64: FAILED"
+
+        # === Compile for x86 ===
+        echo "=== Compiling for x86 ==="
+        cd /tmp/stockfish-src/src
+        make clean 2>/dev/null || true
+        make -j$(nproc) build \
+          ARCH=x86-32-sse41-popcnt \
+          COMP=clang \
+          CXX="$TOOLCHAIN/bin/i686-linux-android34-clang++" \
+          CC="$TOOLCHAIN/bin/i686-linux-android34-clang" \
+          EXE=stockfish 2>&1 && \
+        cp stockfish $GITHUB_WORKSPACE/app/src/main/assets/stockfish/x86/stockfish && \
+        chmod +x $GITHUB_WORKSPACE/app/src/main/assets/stockfish/x86/stockfish && \
+        echo "x86: OK" || echo "x86: FAILED"
+
+        # List results
+        echo "=== Stockfish binary results ==="
         for abi in arm64-v8a armeabi-v7a x86_64 x86; do
-          if [ -f "app/src/main/assets/stockfish/$abi/stockfish" ]; then
-            SIZE=$(stat -c%s "app/src/main/assets/stockfish/$abi/stockfish" 2>/dev/null || echo "0")
-            echo "  $abi: EXISTS ($SIZE bytes)"
-            file "app/src/main/assets/stockfish/$abi/stockfish" 2>/dev/null
+          if [ -f "$GITHUB_WORKSPACE/app/src/main/assets/stockfish/$abi/stockfish" ]; then
+            SIZE=$(stat -c%s "$GITHUB_WORKSPACE/app/src/main/assets/stockfish/$abi/stockfish" 2>/dev/null || echo "0")
+            echo "  $abi: $SIZE bytes"
+            file "$GITHUB_WORKSPACE/app/src/main/assets/stockfish/$abi/stockfish" 2>/dev/null || true
           else
             echo "  $abi: MISSING"
           fi
