@@ -1,0 +1,2 @@
+-keep class com.chesssolver.app.engine.** { *; }
+-keepclassmembers class com.chesssolver.app.engine.** { *; }

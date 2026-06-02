@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:id="@+id/overlayContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/overlay_bg_rounded"
+        android:padding="4dp"
+        android:gravity="center_vertical">
+
+        <Button
+            android:id="@+id/btnMyMove"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="My Move Now"
+            android:textSize="13sp"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            android:background="@drawable/button_move_bg"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:minWidth="120dp" />
+
+        <ImageButton
+            android:id="@+id/btnClose"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Close"
+            android:layout_marginStart="4dp" />
+
+    </LinearLayout>
+</FrameLayout>
