@@ -19,13 +19,13 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="56dp" />
+        android:layout_marginTop="40dp" />
 
     <TextView
         android:id="@+id/tvVersion"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="v2.0 — Built-in Engine"
+        android:text="v3.0 — Stockfish + Calibration"
         android:textSize="13sp"
         android:textColor="#484F58"
         app:layout_constraintTop_toBottomOf="@id/tvTitle"
@@ -45,7 +45,7 @@
         app:layout_constraintTop_toBottomOf="@id/tvVersion"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="32dp">
+        android:layout_marginTop="24dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -56,19 +56,60 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="How it works"
+                android:text="Overlay Controls"
                 android:textSize="16sp"
                 android:textColor="#58A6FF"
                 android:textStyle="bold"
-                android:layout_marginBottom="12dp" />
+                android:layout_marginBottom="8dp" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="1. Grant overlay + screen capture permissions\n2. Open your chess app (Chess.com, Lichess, etc.)\n3. Press Start Solver\n4. Tap ◎ to calibrate the board area\n5. Tap ♞ My Move to see the best move arrow\n\nThe app watches your screen in real-time and uses a built-in chess engine to find the best move."
+                android:text="♞ Solve — Find the best move\n◎ Calibrate — Set board area (drag corners + Save)\n⊞ Auto-detect — Scan screen for board"
                 android:textSize="14sp"
                 android:textColor="#8B949E"
-                android:lineSpacingExtra="6dp" />
+                android:lineSpacingExtra="4dp" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardSteps"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:cardBackgroundColor="#161B22"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="0dp"
+        app:strokeColor="#30363D"
+        app:strokeWidth="1dp"
+        app:layout_constraintTop_toBottomOf="@id/cardInfo"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginTop="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Quick Start"
+                android:textSize="16sp"
+                android:textColor="#D29922"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="1. Grant overlay + screen capture\n2. Start Solver, open your chess app\n3. Tap ⊞ to auto-detect or ◎ to calibrate\n4. Drag corners to adjust, tap Save\n5. Tap ♞ Solve to see the best move arrow"
+                android:textSize="14sp"
+                android:textColor="#8B949E"
+                android:lineSpacingExtra="4dp" />
 
         </LinearLayout>
 
@@ -81,10 +122,10 @@
         android:text="● Stopped"
         android:textSize="16sp"
         android:textColor="#F85149"
-        app:layout_constraintTop_toBottomOf="@id/cardInfo"
+        app:layout_constraintTop_toBottomOf="@id/cardSteps"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="28dp" />
+        android:layout_marginTop="24dp" />
 
     <Button
         android:id="@+id/btnStartStop"
@@ -99,13 +140,13 @@
         app:layout_constraintTop_toBottomOf="@id/tvStatus"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="24dp" />
+        android:layout_marginTop="20dp" />
 
     <TextView
         android:id="@+id/tvFooter"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Pure Kotlin engine • No internet required"
+        android:text="Stockfish engine • Kotlin fallback • No internet"
         android:textSize="12sp"
         android:textColor="#30363D"
         app:layout_constraintBottom_toBottomOf="parent"
