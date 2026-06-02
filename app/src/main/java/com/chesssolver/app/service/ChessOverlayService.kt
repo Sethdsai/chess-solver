@@ -79,6 +79,9 @@ class ChessOverlayService : Service() {
         screenWidth = metrics.widthPixels
         screenHeight = metrics.heightPixels
         densityDpi = metrics.densityDpi
+
+        // Initialize Stockfish engine
+        engine.ensureInitialized(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -340,7 +343,11 @@ class ChessOverlayService : Service() {
 
                 // Step 3: Get best move from Stockfish
                 val bestMove = withContext(Dispatchers.Default) {
-                    engine.getBestMove(fen)
+                    if (!engine.ensureInitialized(this@ChessOverlayService)) {
+                        null
+                    } else {
+                        engine.getBestMove(fen)
+                    }
                 }
 
                 if (bestMove == null) {
